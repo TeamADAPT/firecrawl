@@ -4,9 +4,9 @@
   "description": "browser rendering service with playwright",
   "main": "api.ts",
   "scripts": {
-    "start": "node dist/api.js",
-    "build": "tsc",
-    "dev": "tsx api.ts"
+    "start": "node init && node dist/api.js",
+    "build": "node init && tsc",
+    "dev": "node init && tsx api.ts"
   },
   "keywords": [],
   "author": "Jeff Pereira",
