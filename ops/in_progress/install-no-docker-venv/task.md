@@ -1,5 +1,8 @@
 # Install Firecrawl Without Docker Or Venv
 
+## 2026-06-28 06:21:09 — Codex
+Native dependency installation completed. DragonflyDB, RabbitMQ, PostgreSQL 16, and `pg_cron` are running under systemd. Created Firecrawl PostgreSQL role/database and loaded NUQ schema. Runtime secret file created at `/etc/firecrawl/firecrawl.env`.
+
 ## 2026-06-28 06:18:16 — Codex
 Plan approved. Cache dependency changed from Redis server to DragonflyDB. Queue dependency remains RabbitMQ because Firecrawl uses AMQP/RabbitMQ code paths and NATS is not wire-compatible with `amqplib`.
 

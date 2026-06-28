@@ -1,5 +1,8 @@
 # Decisions Log
 
+## 2026-06-28 06:21:09 — Codex
+Decision recorded: Use a dedicated local PostgreSQL `firecrawl` database and role with URL-safe generated credentials stored in `/etc/firecrawl/firecrawl.env`; configure `pg_cron` for the `firecrawl` database so NUQ scheduled jobs run in the live database. Files touched: `/etc/firecrawl/firecrawl.env`, `/var/lib/postgresql/16/main/postgresql.auto.conf`, `/adapt/repos/firecrawl/apps/nuq-postgres/nuq.sql`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`, `/adapt/repos/firecrawl/ops/in_progress/install-no-docker-venv/task.md`.
+
 ## 2026-06-28 06:18:16 — Codex
 Decision recorded: Use DragonflyDB as the Redis-protocol replacement and keep native RabbitMQ for AMQP queueing; NATS is not a drop-in replacement for the current Firecrawl code paths. Files touched: `/adapt/repos/firecrawl/plans/no_docker_no_venv_install.md`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`, `/adapt/repos/firecrawl/ops/in_progress/install-no-docker-venv/task.md`.
 
