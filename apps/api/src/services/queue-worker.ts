@@ -444,16 +444,17 @@ app.get("/liveness", (req, res) => {
 });
 
 const workerPort = config.WORKER_PORT || config.PORT;
-app.listen(workerPort, (error?: Error) => {
+app.listen(workerPort, config.HOST, (error?: Error) => {
   if (error) {
     _logger.error("Failed to start liveness endpoint", {
       error,
       port: workerPort,
+      host: config.HOST,
     });
     throw error;
   }
 
-  _logger.info(`Liveness endpoint is running on port ${workerPort}`);
+  _logger.info(`Liveness endpoint is running on ${config.HOST}:${workerPort}`);
 });
 
 (async () => {
