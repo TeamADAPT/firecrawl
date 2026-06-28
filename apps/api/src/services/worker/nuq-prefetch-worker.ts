@@ -30,16 +30,21 @@ import { logger } from "../../lib/logger";
 
   const server = app.listen(
     config.NUQ_PREFETCH_WORKER_PORT,
+    config.HOST,
     (error?: Error) => {
       if (error) {
         logger.error("Failed to start NuQ prefetch worker metrics server", {
           error,
           port: config.NUQ_PREFETCH_WORKER_PORT,
+          host: config.HOST,
         });
         throw error;
       }
 
-      logger.info("NuQ prefetch worker metrics server started");
+      logger.info("NuQ prefetch worker metrics server started", {
+        host: config.HOST,
+        port: config.NUQ_PREFETCH_WORKER_PORT,
+      });
     },
   );
 
