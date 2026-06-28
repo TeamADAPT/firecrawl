@@ -1,0 +1,7 @@
+# Decisions Log
+
+## 2026-06-28 05:33:35 — Codex
+Decision recorded: Use repo-local Git identity `Codex <codex@dev1.local>` so required checkpoint commits can be created without changing global Git configuration. Files touched: `/adapt/repos/firecrawl/.git/config`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`.
+
+## 2026-06-28 05:32:17 — Codex
+Decision recorded: Treat Docker compose as a service topology reference only and install Firecrawl using native system packages plus systemd-managed services. Files touched: `/adapt/repos/firecrawl/plans/no_docker_no_venv_install.md`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`, `/adapt/repos/firecrawl/ops/in_progress/install-no-docker-venv/task.md`.
