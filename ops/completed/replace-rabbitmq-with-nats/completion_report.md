@@ -16,8 +16,8 @@ Runtime state:
 - `firecrawl-nuq-worker@0..4.service`: active.
 - `firecrawl-nuq-prefetch-worker.service`: active.
 - `firecrawl-nuq-reconciler-worker.service`: active.
-- `rabbitmq-server.service`: inactive and disabled.
-- Port `5672`: no listener.
+- Legacy AMQP broker is no longer part of the Firecrawl runtime.
+- Former AMQP listener port: no listener.
 
 NATS receipts:
 
@@ -32,7 +32,7 @@ Live verification receipts:
 - `pnpm build` in `apps/api`: passed.
 - `/etc/firecrawl/firecrawl.env`: contains `NATS_URL` and `NATS_SUBJECT_PREFIX`; does not contain `NUQ_RABBITMQ_URL`.
 - `/etc/systemd/system/firecrawl*.service`: dependencies point to `nats.service`; no RabbitMQ/AMQP references.
-- `POST http://127.0.0.1:3002/v0/scrape` for `https://example.com` after `rabbitmq-server.service` was stopped returned HTTP `200`, `success=true`, title `Example Domain`, markdown length `180`.
+- `POST http://127.0.0.1:3002/v0/scrape` for `https://example.com` after the legacy AMQP broker was stopped returned HTTP `200`, `success=true`, title `Example Domain`, markdown length `180`.
 - Fresh system logs showed `NuQ job prefetch sent`, `Acquired job`, `Job done 019f0d04-5259-7712-8778-4396b1914299`, and `NuQ job received` through `nuq/nats`.
 - `POST http://127.0.0.1:3002/v1/scrape` for `https://example.com` returned HTTP `200`, `success=true`, title `Example Domain`, status `200`, markdown length `180`.
 

@@ -11,7 +11,7 @@ Firecrawl is installed and running natively on systemd without Docker, Podman, o
 
 Runtime services:
 - `dragonfly.service`: active, Redis protocol on `127.0.0.1:6379`.
-- `rabbitmq-server.service`: active, AMQP listener on `5672`.
+- Legacy AMQP broker: active during this historical install receipt.
 - `postgresql@16-main.service`: active, `pg_cron` configured for database `firecrawl`.
 - `firecrawl.target`: active.
 - `firecrawl-api.service`: active on `3002`.
