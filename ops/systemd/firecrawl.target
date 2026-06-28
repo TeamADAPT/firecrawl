@@ -1,0 +1,8 @@
+[Unit]
+Description=Firecrawl native service stack
+Wants=firecrawl-playwright.service firecrawl-api.service firecrawl-worker.service firecrawl-extract-worker.service firecrawl-nuq-worker@0.service firecrawl-nuq-worker@1.service firecrawl-nuq-worker@2.service firecrawl-nuq-worker@3.service firecrawl-nuq-worker@4.service firecrawl-nuq-prefetch-worker.service firecrawl-nuq-reconciler-worker.service
+After=network.target
+
+[Install]
+WantedBy=multi-user.target
+

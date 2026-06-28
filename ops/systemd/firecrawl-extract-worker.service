@@ -1,0 +1,22 @@
+[Unit]
+Description=Firecrawl extract worker
+After=network.target dragonfly.service rabbitmq-server.service postgresql@16-main.service firecrawl-api.service
+Wants=dragonfly.service rabbitmq-server.service postgresql@16-main.service
+
+[Service]
+Type=simple
+User=x
+Group=x
+WorkingDirectory=/adapt/repos/firecrawl/apps/api
+Environment=HOME=/home/x
+Environment=NUQ_POD_NAME=extract-worker
+Environment=EXTRACT_WORKER_PORT=3004
+EnvironmentFile=/etc/firecrawl/firecrawl.env
+ExecStart=/usr/bin/node dist/src/services/extract-worker.js
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=firecrawl.target
+
