@@ -18,6 +18,7 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 3003;
+const host = process.env.HOST || '127.0.0.1';
 
 app.use(express.json());
 
@@ -561,8 +562,8 @@ app.post('/scrape', async (req: Request, res: Response) => {
 const start = async () => {
   ssrfProxyPort = await startSSRFProxy();
   await initializeBrowser();
-  app.listen(port, () => {
-    console.log(`Server is running on port ${port}`);
+  app.listen(port, host, () => {
+    console.log(`Server is running on ${host}:${port}`);
   });
 };
 start().catch((error) => {

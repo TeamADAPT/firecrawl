@@ -46,16 +46,19 @@ const reconcilerJobsRecoveredTotal = new Counter({
 
   const server = app.listen(
     config.NUQ_RECONCILER_WORKER_PORT,
+    config.HOST,
     (error?: Error) => {
       if (error) {
         _logger.error("Failed to start NuQ reconciler worker", {
           error,
           port: config.NUQ_RECONCILER_WORKER_PORT,
+          host: config.HOST,
         });
         throw error;
       }
 
       _logger.info("NuQ reconciler worker started", {
+        host: config.HOST,
         port: config.NUQ_RECONCILER_WORKER_PORT,
       });
     },
