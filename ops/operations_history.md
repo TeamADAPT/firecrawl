@@ -1,5 +1,8 @@
 # Operations History
 
+## 2026-06-28 07:19:34 — Codex
+Updated `/adapt/secrets/db.env` with namespaced Firecrawl native systemd connection information sourced from `/etc/firecrawl/firecrawl.env`, including API URL, service ports, PostgreSQL/NUQ database connection keys, DragonflyDB Redis URLs, NATS URL/subject prefix, queue transport, and systemd target. Preserved file ownership/mode and created backup `/adapt/secrets/db.env.bak.20260628071934.firecrawl-connection-info`. Files touched: `/adapt/secrets/db.env`, `/adapt/secrets/db.env.bak.20260628071934.firecrawl-connection-info`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`.
+
 ## 2026-06-28 07:02:00 — Codex
 Removed explicit legacy AMQP unit-name/status wording from tracked ops reports and top-level queue replacement logs while keeping NATS JetStream replacement receipts intact. Files touched: `/adapt/repos/firecrawl/ops/completed/replace-rabbitmq-with-nats/completion_report.md`, `/adapt/repos/firecrawl/ops/completed/install-no-docker-venv/completion_report.md`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`.
 

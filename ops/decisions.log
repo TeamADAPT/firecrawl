@@ -1,5 +1,8 @@
 # Decisions Log
 
+## 2026-06-28 07:19:34 — Codex
+Decision recorded: Store Firecrawl native runtime connection information in `/adapt/secrets/db.env` using `FIRECRAWL_*` namespaced keys to avoid collisions with other shared `DATABASE_URL`, `REDIS_*`, and `NATS_*` entries. Source values from the live `/etc/firecrawl/firecrawl.env` file and keep secrets out of tracked files. Files touched: `/adapt/secrets/db.env`, `/adapt/secrets/db.env.bak.20260628071934.firecrawl-connection-info`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`.
+
 ## 2026-06-28 07:02:00 — Codex
 Decision recorded: Do not preserve explicit legacy AMQP unit-name/status wording in tracked operational reports; keep the NATS JetStream receipts and current runtime facts without naming the removed service unit. Files touched: `/adapt/repos/firecrawl/ops/completed/replace-rabbitmq-with-nats/completion_report.md`, `/adapt/repos/firecrawl/ops/completed/install-no-docker-venv/completion_report.md`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`.
 
