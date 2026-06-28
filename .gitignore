@@ -52,6 +52,7 @@ apps/python-sdk/.venv/
 
 
 /apps/go-html-to-md-service/.gomodcache/
+apps/api/sharedLibs/go-html-to-md/libhtml-to-markdown.*
 target/
 
 .cursor/

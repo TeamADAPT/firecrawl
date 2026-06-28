@@ -1,5 +1,8 @@
 # Decisions Log
 
+## 2026-06-28 06:25:34 — Codex
+Decision recorded: Install FoundationDB client `7.3.63` because the API package includes the `foundationdb` native dependency even though this deployment uses the PostgreSQL NUQ backend. Generated Go/native/TypeScript build outputs are ignored and not committed. Files touched: `/adapt/repos/firecrawl/.gitignore`, `/usr/include/foundationdb/fdb_c.h`, `/usr/lib/libfdb_c.so`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`, `/adapt/repos/firecrawl/ops/in_progress/install-no-docker-venv/task.md`.
+
 ## 2026-06-28 06:21:09 — Codex
 Decision recorded: Use a dedicated local PostgreSQL `firecrawl` database and role with URL-safe generated credentials stored in `/etc/firecrawl/firecrawl.env`; configure `pg_cron` for the `firecrawl` database so NUQ scheduled jobs run in the live database. Files touched: `/etc/firecrawl/firecrawl.env`, `/var/lib/postgresql/16/main/postgresql.auto.conf`, `/adapt/repos/firecrawl/apps/nuq-postgres/nuq.sql`, `/adapt/repos/firecrawl/ops/operations_history.md`, `/adapt/repos/firecrawl/ops/decisions.log`, `/adapt/repos/firecrawl/ops/in_progress/install-no-docker-venv/task.md`.
 
