@@ -101,6 +101,8 @@ const configSchema = z.object({
   REDIS_RATE_LIMIT_URL: z.string().optional(),
   NUQ_DATABASE_URL: z.string().optional(),
   NUQ_DATABASE_URL_LISTEN: z.string().optional(),
+  NATS_URL: z.string().optional(),
+  NATS_SUBJECT_PREFIX: z.string().default("firecrawl"),
   NUQ_RABBITMQ_URL: z.string().optional(),
   FDB_CLUSTER_FILE: emptyStringAsUndefined(z.string()),
   NUQ_BACKEND: emptyStringAsUndefined(z.enum(["pg", "fdb"])),

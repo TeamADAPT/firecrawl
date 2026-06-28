@@ -1,5 +1,9 @@
 # No-Docker No-Venv Firecrawl Install Plan
 
+## Superseded Runtime Note
+
+As of 2026-06-28, RabbitMQ is superseded for the active native runtime by `plans/replace_rabbitmq_with_nats.md` and ADR `docs/adr/0001-replace-rabbitmq-with-nats-jetstream.md`. DragonflyDB remains the Redis-protocol replacement.
+
 ## Objective
 Install and run Firecrawl from `/adapt/repos/firecrawl` without Docker, Podman, Python virtual environments, or container-managed dependencies.
 

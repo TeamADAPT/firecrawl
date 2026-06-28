@@ -242,7 +242,7 @@ if (require.main === module) {
 
   initializeEngineForcing();
 
-  _logger.info("Starting extract worker with RabbitMQ...");
+  _logger.info("Starting extract worker with NATS JetStream...");
 
   // Start consuming from both the main queue and the DLQ
   await Promise.all([
@@ -250,5 +250,5 @@ if (require.main === module) {
     consumeExtractDLQ(processDLQJob),
   ]);
 
-  _logger.info("Extract worker started, consuming from RabbitMQ");
+  _logger.info("Extract worker started, consuming from NATS JetStream");
 })();

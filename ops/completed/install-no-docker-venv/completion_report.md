@@ -1,5 +1,11 @@
 # Completion Report
 
+## Current Status Note
+
+As of 2026-06-28, RabbitMQ is superseded for the active Firecrawl runtime by NATS JetStream. See `/adapt/repos/firecrawl/docs/adr/0001-replace-rabbitmq-with-nats-jetstream.md` and `/adapt/repos/firecrawl/ops/completed/replace-rabbitmq-with-nats/completion_report.md`.
+
+— Codex
+
 ## 2026-06-28 06:29:00 — Codex
 Firecrawl is installed and running natively on systemd without Docker, Podman, or Python virtual environments.
 

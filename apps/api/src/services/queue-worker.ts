@@ -334,7 +334,7 @@ const crawlFinishWorker = async () => {
     if (job === null) {
       __logger.info("No jobs to process", { module: "nuq/metrics" });
       await new Promise(resolve => setTimeout(resolve, noJobTimeout));
-      if (!config.NUQ_RABBITMQ_URL) {
+      if (!config.NATS_URL && !config.NUQ_RABBITMQ_URL) {
         noJobTimeout = Math.min(noJobTimeout * 2, 10000);
       }
       continue;

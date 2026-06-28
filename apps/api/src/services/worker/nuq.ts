@@ -1,12 +1,21 @@
 import { Logger } from "winston";
+import { type Subscription } from "nats";
 import { logger } from "../../lib/logger";
 import { Client, Pool } from "pg";
 import { type ScrapeJobData } from "../../types";
 import { withSpan, setSpanAttributes } from "../../lib/otel-tracer";
-import amqp from "amqplib";
 import { normalizeOwnerId } from "../../lib/owner-id";
 import { config } from "../../config";
 import { nuqRedis } from "./redis";
+import {
+  ensureNatsConsumer,
+  ensureNatsStream,
+  getNatsConnection,
+  getNatsJsonCodec,
+  natsEnabled,
+  natsSubject,
+  publishNatsJson,
+} from "../nats";
 
 // === Basics
 
@@ -53,42 +62,6 @@ type NuQOptions = {
   backlog?: boolean;
 };
 
-function isExpectedAmqpCloseError(error: unknown): boolean {
-  const message =
-    error instanceof Error
-      ? error.message
-      : error && typeof error === "object" && "message" in error
-        ? String(error.message)
-        : typeof error === "string"
-          ? error
-          : "";
-
-  return (
-    message === "Connection closing" ||
-    message === "Connection closed" ||
-    message === "Channel closing" ||
-    message === "Channel closed"
-  );
-}
-
-async function closeAmqpResource(
-  close: () => Promise<unknown>,
-  resource: string,
-) {
-  try {
-    await close();
-  } catch (error) {
-    if (isExpectedAmqpCloseError(error)) {
-      logger.info(`NuQ ${resource} already closing during shutdown`, {
-        module: "nuq/rabbitmq",
-      });
-      return;
-    }
-
-    throw error;
-  }
-}
-
 // === Queue
 
 class NuQ<JobData = any, JobReturnValue = any> {
@@ -98,7 +71,38 @@ class NuQ<JobData = any, JobReturnValue = any> {
   constructor(
     public readonly queueName: string,
     public readonly options: NuQOptions,
-  ) {}
+  ) {
+    const normalizedQueueName = queueName.replace(/[^A-Za-z0-9_-]/g, "_");
+    this.queueSubjectName = normalizedQueueName.startsWith("nuq_")
+      ? normalizedQueueName.slice("nuq_".length)
+      : normalizedQueueName;
+  }
+
+  private readonly queueSubjectName: string;
+
+  private prefetchStreamName(): string {
+    return `FIRECRAWL_NUQ_${this.queueSubjectName.toUpperCase()}`;
+  }
+
+  private prefetchConsumerName(): string {
+    return `firecrawl-${this.queueSubjectName}-prefetch`;
+  }
+
+  private prefetchSubject(): string {
+    return natsSubject("nuq", this.queueSubjectName, "prefetch");
+  }
+
+  private listenSubject(listenChannelId = this.listenChannelId): string {
+    return natsSubject("nuq", this.queueSubjectName, "listen", listenChannelId);
+  }
+
+  private async ensureNatsPrefetchConsumer() {
+    const stream = this.prefetchStreamName();
+    const subject = this.prefetchSubject();
+
+    await ensureNatsStream(stream, [subject]);
+    return ensureNatsConsumer(stream, this.prefetchConsumerName(), subject);
+  }
 
   // === Listener
 
@@ -108,10 +112,8 @@ class NuQ<JobData = any, JobReturnValue = any> {
         client: Client;
       }
     | {
-        type: "rabbitmq";
-        connection: amqp.ChannelModel;
-        channel: amqp.Channel;
-        queue: string;
+        type: "nats";
+        subscription: Subscription;
       }
     | null = null;
   private listens: {
@@ -123,51 +125,42 @@ class NuQ<JobData = any, JobReturnValue = any> {
   private async startListener() {
     if (this.listener || this.shuttingDown || this.listenerStarting) return;
 
-    if (config.NUQ_RABBITMQ_URL) {
+    if (natsEnabled()) {
       this.listenerStarting = true;
 
       try {
-        const connection = await amqp.connect(config.NUQ_RABBITMQ_URL);
-        const channel = await connection.createChannel();
-        await channel.prefetch(5);
-        const queue = await channel.assertQueue(
-          this.queueName + ".listen." + this.listenChannelId,
-          {
-            exclusive: true,
-            autoDelete: true,
-            durable: false,
-            arguments: {
-              "x-queue-type": "classic",
-              "x-message-ttl": 60000,
-            },
-          },
-        );
+        const connection = await getNatsConnection();
+        const subscription = connection.subscribe(this.listenSubject());
 
         this.listener = {
-          type: "rabbitmq",
-          connection,
-          channel,
-          queue: queue.queue,
+          type: "nats",
+          subscription,
         };
       } finally {
         this.listenerStarting = false;
       }
 
+      const listener = this.listener;
+      if (!listener || listener.type !== "nats") return;
+
       let reconnectTimeout: NodeJS.Timeout | null = null;
+      const subscription = listener.subscription;
+      const json = getNatsJsonCodec();
 
       const onClose = function onClose() {
-        logger.info("NuQ listener channel closed", {
-          module: "nuq/rabbitmq",
+        logger.info("NuQ listener subscription closed", {
+          module: "nuq/nats",
         });
         this.listener = null;
 
+        if (this.shuttingDown) return;
         if (reconnectTimeout) clearTimeout(reconnectTimeout);
         reconnectTimeout = setTimeout(
           (() => {
             this.startListener().catch(err =>
               logger.error("Error in NuQ listener reconnect", {
                 err,
-                module: "nuq/rabbitmq",
+                module: "nuq/nats",
               }),
             );
           }).bind(this),
@@ -176,39 +169,46 @@ class NuQ<JobData = any, JobReturnValue = any> {
         return;
       }.bind(this);
 
-      this.listener.connection.on("close", onClose);
-      this.listener.channel.on("close", onClose);
+      (async () => {
+        try {
+          for await (const msg of subscription) {
+            const payload = json.decode(msg.data) as {
+              id?: string;
+              status?: "completed" | "failed";
+            };
 
-      await this.listener.channel.consume(
-        this.listener.queue,
-        (msg => {
-          if (msg === null) {
-            onClose();
-            return;
+            const jobId = payload.id;
+            const status = payload.status;
+
+            if (!jobId || (status !== "completed" && status !== "failed")) {
+              logger.warn("NuQ listener received invalid NATS payload", {
+                module: "nuq/nats",
+                subject: msg.subject,
+              });
+              continue;
+            }
+
+            logger.info("NuQ job received", {
+              module: "nuq/nats",
+              jobId,
+              status,
+            });
+
+            if (jobId in this.listens) {
+              this.listens[jobId].forEach(listener => listener(status));
+            }
+            delete this.listens[jobId];
           }
 
-          logger.info("NuQ job received", {
-            module: "nuq/rabbitmq",
-            jobId: msg.properties.correlationId,
-            status: msg.content.toString(),
+          onClose();
+        } catch (err) {
+          logger.error("Error in NuQ NATS listener", {
+            err,
+            module: "nuq/nats",
           });
-
-          const jobId = msg.properties.correlationId as string;
-          const status = msg.content.toString() as "completed" | "failed";
-
-          if (jobId in this.listens) {
-            this.listens[jobId].forEach(listener => listener(status));
-          }
-          delete this.listens[jobId];
-
-          if (this.listener && this.listener.type === "rabbitmq") {
-            this.listener.channel.ack(msg);
-          }
-        }).bind(this),
-        {
-          noAck: false,
-        },
-      );
+          onClose();
+        }
+      })();
     } else {
       this.listenerStarting = true;
 
@@ -316,11 +316,7 @@ class NuQ<JobData = any, JobReturnValue = any> {
 
   // === Sender
 
-  private sender: {
-    type: "rabbitmq";
-    connection: amqp.ChannelModel;
-    channel: amqp.Channel;
-  } | null = null;
+  private sender: { type: "nats" } | null = null;
   private senderStarting = false;
 
   private async startSender() {
@@ -328,51 +324,9 @@ class NuQ<JobData = any, JobReturnValue = any> {
     this.senderStarting = true;
 
     try {
-      if (config.NUQ_RABBITMQ_URL) {
-        const connection = await amqp.connect(config.NUQ_RABBITMQ_URL);
-        const channel = await connection.createChannel();
-        await channel.assertQueue(this.queueName + ".prefetch", {
-          durable: true,
-          arguments: {
-            "x-queue-type": "quorum",
-            "x-max-length": 20000,
-          },
-        });
-
-        this.sender = {
-          type: "rabbitmq",
-          connection,
-          channel,
-        };
-
-        channel.on("close", () => {
-          logger.info("NuQ sender channel closed", { module: "nuq/rabbitmq" });
-          if (!this.shuttingDown) {
-            connection.close().catch(() => {});
-          }
-          this.sender = null;
-        });
-
-        channel.on("error", err => {
-          logger.error("NuQ sender channel error", {
-            module: "nuq/rabbitmq",
-            err,
-          });
-        });
-
-        connection.on("close", () => {
-          logger.info("NuQ sender connection closed", {
-            module: "nuq/rabbitmq",
-          });
-          this.sender = null;
-        });
-
-        connection.on("error", err => {
-          logger.error("NuQ sender connection error", {
-            module: "nuq/rabbitmq",
-            err,
-          });
-        });
+      if (natsEnabled()) {
+        await this.ensureNatsPrefetchConsumer();
+        this.sender = { type: "nats" };
       }
     } finally {
       this.senderStarting = false;
@@ -388,16 +342,11 @@ class NuQ<JobData = any, JobReturnValue = any> {
     await this.startSender();
 
     if (this.sender) {
-      this.sender.channel.sendToQueue(
-        this.queueName + ".listen." + listenChannelId,
-        Buffer.from(status, "utf8"),
-        {
-          correlationId: id,
-        },
-      );
-      _logger.info("NuQ job sent", { module: "nuq/rabbitmq" });
+      const subject = this.listenSubject(listenChannelId);
+      await publishNatsJson(subject, { id, status });
+      _logger.info("NuQ job sent", { module: "nuq/nats", subject });
     } else {
-      _logger.warn("NuQ sender not started", { module: "nuq/rabbitmq" });
+      _logger.warn("NuQ sender not started", { module: "nuq/nats" });
     }
   }
 
@@ -408,18 +357,10 @@ class NuQ<JobData = any, JobReturnValue = any> {
     await this.startSender();
 
     if (this.sender) {
-      this.sender.channel.sendToQueue(
-        this.queueName + ".prefetch",
-        Buffer.from(JSON.stringify(job), "utf8"),
-        {
-          correlationId: job.id,
-          persistent: true,
-          expiration: "50000", // must be less than lock reaper timeout (1 min) to minimize dead zone where jobs are expired from RabbitMQ but still "active" in DB
-        },
-      );
-      _logger.info("NuQ job prefetch sent", { module: "nuq/rabbitmq" });
+      await publishNatsJson(this.prefetchSubject(), job, { msgID: job.id });
+      _logger.info("NuQ job prefetch sent", { module: "nuq/nats" });
     } else {
-      _logger.warn("NuQ sender not started", { module: "nuq/rabbitmq" });
+      _logger.warn("NuQ sender not started", { module: "nuq/nats" });
     }
   }
 
@@ -471,10 +412,10 @@ class NuQ<JobData = any, JobReturnValue = any> {
     };
   }
 
-  // RabbitMQ payloads are already-mapped NuQJobs (camelCase) that have been
+  // NATS payloads are already-mapped NuQJobs (camelCase) that have been
   // serialized to JSON, so dates arrive as strings. Revive them here instead
   // of running the payload back through rowToJob (which expects raw DB rows).
-  private rabbitRowToJob(row: any): NuQJob<JobData, JobReturnValue> | null {
+  private serializedRowToJob(row: any): NuQJob<JobData, JobReturnValue> | null {
     if (!row) return null;
     return {
       ...row,
@@ -1134,7 +1075,7 @@ class NuQ<JobData = any, JobReturnValue = any> {
   }
 
   private readonly nuqWaitMode =
-    config.NUQ_WAIT_MODE === "listen" || config.NUQ_RABBITMQ_URL
+    config.NUQ_WAIT_MODE === "listen" || natsEnabled()
       ? ("listen" as const)
       : ("poll" as const);
 
@@ -1290,23 +1231,23 @@ class NuQ<JobData = any, JobReturnValue = any> {
   public async getJobToProcess(): Promise<NuQJob<any, any> | null> {
     const start = Date.now();
     try {
-      if (config.NUQ_RABBITMQ_URL) {
+      if (natsEnabled()) {
         await this.startSender();
 
         if (this.sender) {
           try {
-            const job = await this.sender.channel.get(
-              this.queueName + ".prefetch",
-              { noAck: true },
-            );
-            if (job !== false) {
-              return this.rabbitRowToJob(JSON.parse(job.content.toString()));
+            const consumer = await this.ensureNatsPrefetchConsumer();
+            const job = await consumer.next({ expires: 1000 });
+            if (job !== null) {
+              const payload = job.json();
+              job.ack();
+              return this.serializedRowToJob(payload);
             } else {
               return null;
             }
           } catch (err) {
-            logger.warn("NuQ sender get failed, falling back to postgres", {
-              module: "nuq/rabbitmq",
+            logger.warn("NuQ NATS get failed, falling back to postgres", {
+              module: "nuq/nats",
               err,
             });
             // Reset sender so it can be re-established on next call
@@ -1314,7 +1255,7 @@ class NuQ<JobData = any, JobReturnValue = any> {
           }
         } else {
           logger.warn("NuQ sender not started, falling back to postgres", {
-            module: "nuq/rabbitmq",
+            module: "nuq/nats",
           });
         }
       }
@@ -1386,17 +1327,17 @@ class NuQ<JobData = any, JobReturnValue = any> {
 
         if (success) {
           const job = result.rows[0];
-          if (this.nuqWaitMode === "listen" && !config.NUQ_RABBITMQ_URL) {
-            await nuqPool.query(`SELECT pg_notify('${this.queueName}', $1);`, [
-              job.id + "|completed",
-            ]);
-          } else if (config.NUQ_RABBITMQ_URL && job.listen_channel_id) {
+          if (natsEnabled() && job.listen_channel_id) {
             await this.sendJobEnd(
               job.id,
               "completed",
               job.listen_channel_id,
               _logger,
             );
+          } else if (this.nuqWaitMode === "listen") {
+            await nuqPool.query(`SELECT pg_notify('${this.queueName}', $1);`, [
+              job.id + "|completed",
+            ]);
           }
         }
 
@@ -1444,17 +1385,17 @@ class NuQ<JobData = any, JobReturnValue = any> {
 
         if (success) {
           const job = result.rows[0];
-          if (this.nuqWaitMode === "listen" && !config.NUQ_RABBITMQ_URL) {
-            await nuqPool.query(`SELECT pg_notify('${this.queueName}', $1);`, [
-              job.id + "|failed",
-            ]);
-          } else if (config.NUQ_RABBITMQ_URL && job.listen_channel_id) {
+          if (natsEnabled() && job.listen_channel_id) {
             await this.sendJobEnd(
               job.id,
               "failed",
               job.listen_channel_id,
               _logger,
             );
+          } else if (this.nuqWaitMode === "listen") {
+            await nuqPool.query(`SELECT pg_notify('${this.queueName}', $1);`, [
+              job.id + "|failed",
+            ]);
           }
         }
 
@@ -1527,22 +1468,11 @@ class NuQ<JobData = any, JobReturnValue = any> {
         await nl.client.query(`UNLISTEN "${this.queueName}";`);
         await nl.client.end();
       } else {
-        await closeAmqpResource(
-          () => nl.channel.cancel(nl.queue),
-          "listener channel consumer",
-        );
-        await closeAmqpResource(() => nl.channel.close(), "listener channel");
-        await closeAmqpResource(
-          () => nl.connection.close(),
-          "listener connection",
-        );
+        nl.subscription.unsubscribe();
       }
     }
     if (this.sender) {
-      const ns = this.sender;
       this.sender = null;
-      await closeAmqpResource(() => ns.channel.close(), "sender channel");
-      await closeAmqpResource(() => ns.connection.close(), "sender connection");
     }
   }
 }

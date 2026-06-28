@@ -1,7 +1,7 @@
 [Unit]
 Description=Firecrawl extract worker
-After=network.target dragonfly.service rabbitmq-server.service postgresql@16-main.service firecrawl-api.service
-Wants=dragonfly.service rabbitmq-server.service postgresql@16-main.service
+After=network.target dragonfly.service nats.service postgresql@16-main.service firecrawl-api.service
+Wants=dragonfly.service nats.service postgresql@16-main.service
 
 [Service]
 Type=simple

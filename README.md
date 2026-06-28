@@ -43,6 +43,10 @@
 
 _Pst. Hey, you, join our stargazers :)_
 
+## Native Host Deployment
+
+This checkout is deployed on the local host as a native systemd stack: no Docker, no Podman, and no Python virtual environments. Firecrawl services run from `ops/systemd/` unit definitions. PostgreSQL stores NUQ state, DragonflyDB provides Redis-protocol state/cache, and NATS JetStream is the active queue transport replacing RabbitMQ for the installed runtime. Architecture notes live in `docs/architecture/native-nats-firecrawl.md`; the queue replacement decision is recorded in `docs/adr/0001-replace-rabbitmq-with-nats-jetstream.md`.
+
 <a href="https://github.com/firecrawl/firecrawl">
   <img src="https://img.shields.io/github/stars/firecrawl/firecrawl.svg?style=social&label=Star&maxAge=2592000" alt="GitHub stars">
 </a>

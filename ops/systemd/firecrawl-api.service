@@ -1,7 +1,7 @@
 [Unit]
 Description=Firecrawl API service
-After=network.target dragonfly.service rabbitmq-server.service postgresql@16-main.service firecrawl-playwright.service
-Wants=dragonfly.service rabbitmq-server.service postgresql@16-main.service firecrawl-playwright.service
+After=network.target dragonfly.service nats.service postgresql@16-main.service firecrawl-playwright.service
+Wants=dragonfly.service nats.service postgresql@16-main.service firecrawl-playwright.service
 
 [Service]
 Type=simple

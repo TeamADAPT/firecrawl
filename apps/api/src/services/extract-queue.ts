@@ -1,10 +1,22 @@
-import amqp from "amqplib";
-import { config } from "../config";
+import {
+  AckPolicy,
+  DeliverPolicy,
+  ReplayPolicy,
+  type ConsumerMessages,
+} from "nats";
 import { logger as _logger } from "../lib/logger";
+import {
+  ensureNatsConsumer,
+  ensureNatsStream,
+  natsSubject,
+  publishNatsJson,
+} from "./nats";
 
-const EXTRACT_QUEUE = "extract.jobs";
-const EXTRACT_DLX = "extract.dlx";
-const EXTRACT_DLQ = "extract.dlq";
+const EXTRACT_STREAM = "FIRECRAWL_EXTRACT";
+const EXTRACT_SUBJECT = natsSubject("extract", "jobs");
+const EXTRACT_DLQ_SUBJECT = natsSubject("extract", "dlq");
+const EXTRACT_CONSUMER = "firecrawl-extract-jobs";
+const EXTRACT_DLQ_CONSUMER = "firecrawl-extract-dlq";
 
 export type ExtractJobData = {
   extractId: string;
@@ -16,66 +28,26 @@ export type ExtractJobData = {
   createdAt: number;
 };
 
-let connection: amqp.ChannelModel | null = null;
-let channel: amqp.Channel | null = null;
+const consumers: ConsumerMessages[] = [];
 
-async function getChannel(): Promise<amqp.Channel> {
-  if (channel) return channel;
-
-  const url = config.NUQ_RABBITMQ_URL;
-  if (!url) {
-    throw new Error("NUQ_RABBITMQ_URL is not configured");
-  }
-
-  connection = await amqp.connect(url);
-  channel = await connection.createChannel();
-
-  // Set up the dead letter exchange
-  await channel.assertExchange(EXTRACT_DLX, "direct", { durable: true });
-
-  // Set up the dead letter queue
-  await channel.assertQueue(EXTRACT_DLQ, {
-    durable: true,
-    arguments: {
-      "x-queue-type": "quorum",
-    },
-  });
-  await channel.bindQueue(EXTRACT_DLQ, EXTRACT_DLX, EXTRACT_QUEUE);
-
-  // Set up the main queue with DLX - no retries (messages go straight to DLQ on reject/crash)
-  await channel.assertQueue(EXTRACT_QUEUE, {
-    durable: true,
-    arguments: {
-      "x-queue-type": "quorum",
-      "x-dead-letter-exchange": EXTRACT_DLX,
-      "x-dead-letter-routing-key": EXTRACT_QUEUE,
-      "x-delivery-limit": 1,
-    },
-  });
-
-  connection.on("close", () => {
-    _logger.warn("Extract queue connection closed");
-    connection = null;
-    channel = null;
-  });
-
-  connection.on("error", err => {
-    _logger.error("Extract queue connection error", { error: err });
-  });
-
-  return channel;
+async function ensureExtractQueues(): Promise<void> {
+  await ensureNatsStream(EXTRACT_STREAM, [
+    EXTRACT_SUBJECT,
+    EXTRACT_DLQ_SUBJECT,
+  ]);
 }
 
 export async function addExtractJob(
   extractId: string,
   data: ExtractJobData,
 ): Promise<void> {
-  const ch = await getChannel();
-  ch.sendToQueue(EXTRACT_QUEUE, Buffer.from(JSON.stringify(data)), {
-    persistent: true,
-    messageId: extractId,
+  await ensureExtractQueues();
+  await publishNatsJson(EXTRACT_SUBJECT, data, { msgID: extractId });
+  _logger.info("Extract job added to queue", {
+    module: "extract-queue",
+    extractId,
+    transport: "nats",
   });
-  _logger.info("Extract job added to queue", { extractId });
 }
 
 export async function consumeExtractJobs(
@@ -85,15 +57,25 @@ export async function consumeExtractJobs(
     nack: () => void,
   ) => Promise<void>,
 ): Promise<void> {
-  const ch = await getChannel();
-  await ch.prefetch(1);
+  await ensureExtractQueues();
+  const consumer = await ensureNatsConsumer(
+    EXTRACT_STREAM,
+    EXTRACT_CONSUMER,
+    EXTRACT_SUBJECT,
+    {
+      ack_policy: AckPolicy.Explicit,
+      deliver_policy: DeliverPolicy.All,
+      replay_policy: ReplayPolicy.Instant,
+      max_ack_pending: 1,
+      max_deliver: 1,
+    },
+  );
+  const messages = await consumer.consume({ max_messages: 1 });
+  consumers.push(messages);
 
-  await ch.consume(
-    EXTRACT_QUEUE,
-    async msg => {
-      if (!msg) return;
-
-      const data = JSON.parse(msg.content.toString()) as ExtractJobData;
+  void (async () => {
+    for await (const msg of messages) {
+      const data = msg.json<ExtractJobData>();
       const logger = _logger.child({
         module: "extract-queue",
         extractId: data.extractId,
@@ -101,36 +83,69 @@ export async function consumeExtractJobs(
 
       logger.info("Processing extract job");
 
+      let settled = false;
+      let settlement: Promise<void> = Promise.resolve();
+
+      const ack = () => {
+        if (settled) return;
+        settled = true;
+        msg.ack();
+      };
+
+      const nack = () => {
+        if (settled) return;
+        settled = true;
+        settlement = publishNatsJson(EXTRACT_DLQ_SUBJECT, data, {
+          msgID: `${data.extractId}-dlq-${Date.now()}`,
+        }).then(() => msg.ack());
+      };
+
       try {
-        await handler(
-          data,
-          () => ch.ack(msg),
-          () => ch.nack(msg, false, false), // Don't requeue - send to DLX
-        );
+        await handler(data, ack, nack);
+        await settlement;
+        if (!settled) msg.ack();
       } catch (error) {
         logger.error("Extract job handler threw an error", { error });
-        // Don't requeue - send to DLX
-        ch.nack(msg, false, false);
+        await publishNatsJson(EXTRACT_DLQ_SUBJECT, data, {
+          msgID: `${data.extractId}-dlq-${Date.now()}`,
+        });
+        msg.ack();
       }
-    },
-    { noAck: false },
-  );
+    }
+  })().catch(error => {
+    _logger.error("Extract NATS consumer loop failed", {
+      module: "extract-queue",
+      error,
+    });
+  });
 
-  _logger.info("Started consuming extract jobs");
+  _logger.info("Started consuming extract jobs", {
+    module: "extract-queue",
+    transport: "nats",
+  });
 }
 
 export async function consumeExtractDLQ(
   handler: (data: ExtractJobData) => Promise<void>,
 ): Promise<void> {
-  const ch = await getChannel();
-  await ch.prefetch(1);
+  await ensureExtractQueues();
+  const consumer = await ensureNatsConsumer(
+    EXTRACT_STREAM,
+    EXTRACT_DLQ_CONSUMER,
+    EXTRACT_DLQ_SUBJECT,
+    {
+      ack_policy: AckPolicy.Explicit,
+      deliver_policy: DeliverPolicy.All,
+      replay_policy: ReplayPolicy.Instant,
+      max_ack_pending: 1,
+    },
+  );
+  const messages = await consumer.consume({ max_messages: 1 });
+  consumers.push(messages);
 
-  await ch.consume(
-    EXTRACT_DLQ,
-    async msg => {
-      if (!msg) return;
-
-      const data = JSON.parse(msg.content.toString()) as ExtractJobData;
+  void (async () => {
+    for await (const msg of messages) {
+      const data = msg.json<ExtractJobData>();
       const logger = _logger.child({
         module: "extract-dlq",
         extractId: data.extractId,
@@ -140,26 +155,25 @@ export async function consumeExtractDLQ(
 
       try {
         await handler(data);
-        ch.ack(msg);
+        msg.ack();
       } catch (error) {
         logger.error("DLQ handler threw an error, requeueing", { error });
-        // Requeue DLQ messages on error so we don't lose them
-        ch.nack(msg, false, true);
+        msg.nak(5000);
       }
-    },
-    { noAck: false },
-  );
+    }
+  })().catch(error => {
+    _logger.error("Extract NATS DLQ consumer loop failed", {
+      module: "extract-dlq",
+      error,
+    });
+  });
 
-  _logger.info("Started consuming extract DLQ");
+  _logger.info("Started consuming extract DLQ", {
+    module: "extract-dlq",
+    transport: "nats",
+  });
 }
 
 export async function shutdownExtractQueue(): Promise<void> {
-  if (channel) {
-    await channel.close();
-    channel = null;
-  }
-  if (connection) {
-    await connection.close();
-    connection = null;
-  }
+  await Promise.all(consumers.splice(0).map(consumer => consumer.close()));
 }
